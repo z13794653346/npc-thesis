@@ -302,7 +302,7 @@ sha256sum agents-v2-formal-fixtures-20260920.json \
 
 `artifacts/` 除正式实验外还包含开发冒烟、缺陷复测、接地性与试点实验的记录，以及各次后端测试的 JUnit XML。**前两类数据不并入正式统计**，仅作过程留存。
 
-> `output/`（浏览器截图与 Playwright 输出）与 `data/`（本机个人存档）仍不被跟踪：前者可由 `npm run test:e2e` 重新生成，后者属于本机运行数据，不应入库。
+> `output/playwright/` 下两张论文界面截图（图4/图5）已随仓库托管；其余 `output/` 内容（浏览器测试输出、字体配置）与 `data/`（本机个人存档）仍不跟踪：前者可由 `npm run test:e2e` 重新生成，后者属于本机运行数据，不应入库。
 
 复现实验会再次产生费用，且**不得覆盖原始数据**：
 
@@ -332,7 +332,7 @@ uv run python -m app.agent_experiments report new-run/records.jsonl --output new
 
 - `.env` —— 含 `DEEPSEEK_API_KEY` 等本机配置，**任何情况下都不得提交**
 - `.venv/`、`.venv-win/`、`frontend/node_modules/`、各类缓存与构建产物
-- `output/`、`data/` —— 浏览器测试输出与本机个人存档（`artifacts/` 已纳入仓库，见上一节）
+- `output/`（除已托管的 `output/playwright/*.png` 两张截图）、`data/` —— 浏览器测试输出与本机个人存档（`artifacts/` 已纳入仓库，见上一节）
 - 学校下发或第三方提供的政策与模板文件（三方协议、安全责任书、知情同意书、管理办法、教务〔2026〕88 号通知等）
 - 任务书各版本（含修正版 docx 与预览 PDF）—— 论文与任务书已保持题名一致，但本轮未纳入仓库
 - `.agents/`、`.omx/`、`PROJECT_MEMORY.md` —— 工具产物，不属于论文交付物

@@ -57,7 +57,6 @@ def test_live_agent_scenario_uses_ten_decisions_without_rule_fallback(tmp_path):
     assert model.calls == 10
     assert summary["logical_calls"] == 10
     assert summary["all_required_checks_passed"] is True
-    assert summary["rule_fallbacks"] == 0
     assert (tmp_path / "session-debug.json").is_file()
     records = [json.loads(line) for line in (tmp_path / "checks.jsonl").read_text().splitlines()]
     source = next(record for record in records if record["name"] == "source-maintenance")

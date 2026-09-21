@@ -1,8 +1,10 @@
-import importlib.util
+def test_new_state_shape_and_npc_isolation():
+    from app.game import new_state
 
-
-def test_game_module_exists():
-    assert importlib.util.find_spec("app") is not None, "NPC domain package is not implemented"
+    s = new_state()
+    assert s["version"] == 0
+    assert set(s["npcs"]) == {"owner", "mechanic", "traveler"}
+    assert all(s["npcs"][npc]["trust"] == 50 for npc in s["npcs"])
 
 
 def test_new_session_isolates_knowledge():

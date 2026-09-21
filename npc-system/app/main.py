@@ -153,7 +153,7 @@ def create_app(db_path=None, model=None, debug_token=None):
     def debug_guard(token):
         if not debug_token:
             raise HTTPException(404, "调试功能未开启。")
-        if not secrets.compare_digest(token or "", debug_token):
+        if not secrets.compare_digest((token or "").encode(), debug_token.encode()):
             raise HTTPException(403, "调试口令不正确。")
 
     @app.get("/api/health")
@@ -199,6 +199,8 @@ def create_app(db_path=None, model=None, debug_token=None):
             raise HTTPException(404, "存档不存在。") from None
         except Conflict as exc:
             raise HTTPException(409, str(exc)) from None
+        except sqlite3.Error:
+            raise HTTPException(503, "存储暂不可用，请稍后重试。") from None
         if previous is not None:
             return JSONResponse(previous, status_code=status)
         if status == 202:
@@ -326,6 +328,48 @@ def create_app(db_path=None, model=None, debug_token=None):
             except sqlite3.Error:
                 pass  # Database unavailable; do not expose DB paths or raw errors.
             return JSONResponse(result, status_code=http_status)
+        except asyncio.CancelledError:
+            # Client disconnected or task cancelled: release the reservation so the
+            # request_id is not burned as an orphaned "processing" row.
+            try:
+                store.fail(
+                    sid,
+                    rid,
+                    {
+                        "request_id": rid,
+                        "status": "failed",
+                        "reply": "请求已取消，本次未执行。",
+                        "action_result": None,
+                        "state": player_view(read(sid)),
+                        "error": {"code": "cancelled", "message": "请求已取消，本次未执行。"},
+                    },
+                    redact(trace, getattr(llm, "api_key", "")),
+                    500,
+                )
+            except (sqlite3.Error, KeyError):
+                pass  # 清理失败不掩盖原始异常
+            raise
+        except Exception:
+            # Any unlisted failure after reserve() must still mark the request failed,
+            # otherwise the same request_id retries as 202 until it permanently 409s.
+            try:
+                store.fail(
+                    sid,
+                    rid,
+                    {
+                        "request_id": rid,
+                        "status": "failed",
+                        "reply": "服务器处理出错，本次未执行。",
+                        "action_result": None,
+                        "state": player_view(read(sid)),
+                        "error": {"code": "internal_error", "message": "服务器处理出错，本次未执行。"},
+                    },
+                    redact(trace, getattr(llm, "api_key", "")),
+                    500,
+                )
+            except (sqlite3.Error, KeyError):
+                pass  # 清理失败不掩盖原始异常
+            raise
 
     @app.post("/api/sessions/{sid}/interactions")
     async def interact(sid: str, body: Interaction):

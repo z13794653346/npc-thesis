@@ -202,7 +202,6 @@ def run_scenario(model, output: Path):
         "logical_calls": getattr(model, "calls", None),
         "max_model_calls": getattr(model, "max_calls", 10),
         "max_http_attempts": getattr(model, "max_calls", 10) * 2,
-        "rule_fallbacks": 0,
         "all_required_checks_passed": all(check["passed"] for check in checks if check["required"]),
         "checks": [{"name": check["name"], "passed": check["passed"]} for check in checks],
         "note": "小规模工程验收，不是正式论文实验；失败项原样保留，不使用规则兜底冒充模型成功。",
