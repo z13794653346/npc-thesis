@@ -1,0 +1,55 @@
+# ===== 系统与编辑器 =====
+.DS_Store
+Thumbs.db
+desktop.ini
+~$*
+*.tmp
+
+# ===== Python =====
+__pycache__/
+*.py[cod]
+.venv/
+.venv-win/
+.pytest_cache/
+.ruff_cache/
+
+# ===== Node / 前端 =====
+node_modules/
+dist/
+test-results/
+playwright-report/
+frontend/.vite/
+
+# ===== 运行时数据与密钥（严禁入库）=====
+.env
+data/
+output/
+
+# ===== 实验产物（可由 scripts/ 与 论文制作_NPC 重新生成）=====
+artifacts/
+
+# ===== DSH / 工具产物（不属于论文交付物）=====
+.agents/
+.omx/
+PROJECT_MEMORY.md
+
+# ===== 学校下发的政策与模板文件（第三方文件，不纳入本仓库）=====
+# 用通配前缀写法，避免个别文件名含不可见控制字符导致精确匹配失效
+2.*三方协议*.pdf
+24级*.pdf
+3.*任务书模版*.docx
+4.*.doc
+5.*.pdf
+5.*.doc
+6.*.pdf
+关于做好2027届*.pdf
+附件3*.docx
+附件4*.pdf
+附件5*.pdf
+
+# ===== 任务书（本轮未纳入仓库；如需上传请删除本段）=====
+毕业论文（设计）任务书.docx
+毕业论文（设计）任务书_智能手机评论Agent.docx
+毕业论文（设计）任务书_游戏NPC记忆与信任交互系统.docx
+毕业论文（设计）任务书_游戏NPC记忆与信任交互系统_修正版.docx
+毕业论文（设计）任务书_游戏NPC记忆与信任交互系统_修正版_预览.pdf

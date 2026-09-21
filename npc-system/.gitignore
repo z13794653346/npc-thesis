@@ -1,0 +1,13 @@
+.venv/
+.venv-win/
+__pycache__/
+.pytest_cache/
+.ruff_cache/
+.env
+data/
+artifacts/
+output/
+frontend/node_modules/
+frontend/dist/
+frontend/test-results/
+frontend/playwright-report/
