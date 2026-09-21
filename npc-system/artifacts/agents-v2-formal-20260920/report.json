@@ -1,0 +1,109 @@
+{
+  "experiment_version": "agents-v2.1",
+  "records": 216,
+  "planned": 216,
+  "complete": true,
+  "groups": {
+    "memory/A": {
+      "n": 54,
+      "valid": 54,
+      "valid_rate": 1.0,
+      "correct": 0,
+      "accuracy": 0.0,
+      "accuracy_ci95": [
+        6.938893903907228e-18,
+        0.06641586678100189
+      ],
+      "leaks": 0,
+      "leak_rate": 0.0,
+      "leak_ci95": [
+        6.938893903907228e-18,
+        0.06641586678100189
+      ],
+      "median_ms": 763.3,
+      "p95_ms": 1074.51,
+      "failed": 0
+    },
+    "memory/B": {
+      "n": 54,
+      "valid": 54,
+      "valid_rate": 1.0,
+      "correct": 54,
+      "accuracy": 1.0,
+      "accuracy_ci95": [
+        0.9335841332189981,
+        1
+      ],
+      "leaks": 0,
+      "leak_rate": 0.0,
+      "leak_ci95": [
+        6.938893903907228e-18,
+        0.06641586678100189
+      ],
+      "median_ms": 784.1949999999999,
+      "p95_ms": 1038.31,
+      "failed": 0
+    },
+    "leak/A": {
+      "n": 54,
+      "valid": 54,
+      "valid_rate": 1.0,
+      "correct": 0,
+      "accuracy": 0.0,
+      "accuracy_ci95": [
+        6.938893903907228e-18,
+        0.06641586678100189
+      ],
+      "leaks": 0,
+      "leak_rate": 0.0,
+      "leak_ci95": [
+        6.938893903907228e-18,
+        0.06641586678100189
+      ],
+      "median_ms": 713.25,
+      "p95_ms": 1032.33,
+      "failed": 0
+    },
+    "leak/B": {
+      "n": 54,
+      "valid": 54,
+      "valid_rate": 1.0,
+      "correct": 0,
+      "accuracy": 0.0,
+      "accuracy_ci95": [
+        6.938893903907228e-18,
+        0.06641586678100189
+      ],
+      "leaks": 0,
+      "leak_rate": 0.0,
+      "leak_ci95": [
+        6.938893903907228e-18,
+        0.06641586678100189
+      ],
+      "median_ms": 753.79,
+      "p95_ms": 1011.27,
+      "failed": 0
+    }
+  },
+  "paired_memory": {
+    "pairs": 54,
+    "a_only": 0,
+    "b_only": 54,
+    "effect": 1.0,
+    "p_value": 1.1102230246251565e-16
+  },
+  "srm": {
+    "a": 108,
+    "b": 108,
+    "chi_square": 0.0,
+    "p_value": 1.0,
+    "detected": false
+  },
+  "guardrails": {
+    "zero_leaks": true,
+    "valid_rate": 1.0,
+    "valid_rate_at_least_95pct": true
+  },
+  "primary_passed": true,
+  "overall_passed": true
+}

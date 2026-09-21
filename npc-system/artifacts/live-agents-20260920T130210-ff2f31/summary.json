@@ -1,0 +1,69 @@
+{
+  "date": "2026-09-20T13:02:19.398311+00:00",
+  "model": "deepseek-flash",
+  "dialogue_version": 2,
+  "logical_calls": 10,
+  "max_model_calls": 10,
+  "max_http_attempts": 20,
+  "rule_fallbacks": 0,
+  "all_required_checks_passed": true,
+  "checks": [
+    {
+      "name": "intro-owner",
+      "passed": true
+    },
+    {
+      "name": "intro-mechanic",
+      "passed": true
+    },
+    {
+      "name": "intro-traveler",
+      "passed": true
+    },
+    {
+      "name": "unknown-private-code",
+      "passed": true
+    },
+    {
+      "name": "setup-assist-register",
+      "passed": true
+    },
+    {
+      "name": "setup-assist-sandbags",
+      "passed": true
+    },
+    {
+      "name": "setup-confirm-promise",
+      "passed": true
+    },
+    {
+      "name": "borrow-key",
+      "passed": true
+    },
+    {
+      "name": "repair-box",
+      "passed": true
+    },
+    {
+      "name": "return-key",
+      "passed": true
+    },
+    {
+      "name": "reveal-maintenance",
+      "passed": true
+    },
+    {
+      "name": "reveal-registry",
+      "passed": true
+    },
+    {
+      "name": "setup-share-maintenance",
+      "passed": true
+    },
+    {
+      "name": "source-maintenance",
+      "passed": true
+    }
+  ],
+  "note": "小规模工程验收，不是正式论文实验；失败项原样保留，不使用规则兜底冒充模型成功。"
+}

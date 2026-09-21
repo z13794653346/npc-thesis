@@ -1,0 +1,118 @@
+{
+  "date": "2026-09-20T05:13:50.864487+00:00",
+  "model": "deepseek-flash",
+  "logical_calls": 10,
+  "mode": "regressions",
+  "max_http_attempts": 20,
+  "checks": [
+    {
+      "name": "greeting-owner",
+      "passed": true
+    },
+    {
+      "name": "greeting-no-clue-owner",
+      "passed": true
+    },
+    {
+      "name": "greeting-mechanic",
+      "passed": true
+    },
+    {
+      "name": "greeting-no-clue-mechanic",
+      "passed": true
+    },
+    {
+      "name": "greeting-traveler",
+      "passed": true
+    },
+    {
+      "name": "greeting-no-clue-traveler",
+      "passed": true
+    },
+    {
+      "name": "unknown-information",
+      "passed": true
+    },
+    {
+      "name": "unknown-information-marker",
+      "passed": true
+    },
+    {
+      "name": "borrow-low-trust",
+      "passed": true
+    },
+    {
+      "name": "low-trust-state",
+      "passed": true
+    },
+    {
+      "name": "rule-assist",
+      "passed": true
+    },
+    {
+      "name": "rule-assist",
+      "passed": true
+    },
+    {
+      "name": "rule-confirm_promise",
+      "passed": true
+    },
+    {
+      "name": "borrow-qualified",
+      "passed": true
+    },
+    {
+      "name": "borrow-qualified-execution",
+      "passed": true
+    },
+    {
+      "name": "borrow-qualified-reply-consistency",
+      "passed": true
+    },
+    {
+      "name": "repair",
+      "passed": true
+    },
+    {
+      "name": "repair-execution",
+      "passed": true
+    },
+    {
+      "name": "repair-reply-consistency",
+      "passed": true
+    },
+    {
+      "name": "return",
+      "passed": true
+    },
+    {
+      "name": "return-execution",
+      "passed": true
+    },
+    {
+      "name": "return-reply-consistency",
+      "passed": true
+    },
+    {
+      "name": "final-return-state",
+      "passed": true
+    },
+    {
+      "name": "reveal-maintenance",
+      "passed": true
+    },
+    {
+      "name": "reveal-notebook-maintenance",
+      "passed": true
+    },
+    {
+      "name": "reveal-registry",
+      "passed": true
+    },
+    {
+      "name": "reveal-notebook-registry",
+      "passed": true
+    }
+  ],
+  "note": "10次以内小规模开发冒烟测试；max_http_attempts是含重试的上限而非实际计数；不能作为正式论文实验结论。"
+}

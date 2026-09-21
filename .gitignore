@@ -25,8 +25,10 @@ frontend/.vite/
 data/
 output/
 
-# ===== 实验产物（可由 scripts/ 与 论文制作_NPC 重新生成）=====
-artifacts/
+# ===== 实验产物 =====
+# npc-system/artifacts/ 自 2026-09-21 起纳入仓库：论文附录 B 列出三项材料的 SHA-256，
+# 仓库内必须保留对应实物以形成完整证据链（固定夹具、216 次实验原始记录 records.jsonl、机器报告 report.json）。
+# 其余运行产物（data/ 个人存档、output/ 截图与浏览器测试输出）仍不跟踪。
 
 # ===== DSH / 工具产物（不属于论文交付物）=====
 .agents/

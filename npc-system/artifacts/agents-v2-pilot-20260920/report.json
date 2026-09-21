@@ -1,0 +1,69 @@
+{
+  "experiment_version": "agents-v2.1",
+  "records": 4,
+  "planned": 4,
+  "complete": true,
+  "groups": {
+    "memory/A": {
+      "n": 1,
+      "valid": 1,
+      "valid_rate": 1.0,
+      "correct": 0,
+      "accuracy": 0.0,
+      "accuracy_ci95": [
+        0,
+        0.7934567085261071
+      ],
+      "leaks": 0,
+      "leak_rate": 0.0,
+      "leak_ci95": [
+        0,
+        0.7934567085261071
+      ],
+      "median_ms": 1686.53,
+      "p95_ms": 1686.53,
+      "failed": 0
+    },
+    "memory/B": {
+      "n": 3,
+      "valid": 3,
+      "valid_rate": 1.0,
+      "correct": 3,
+      "accuracy": 1.0,
+      "accuracy_ci95": [
+        0.43849391955098227,
+        1
+      ],
+      "leaks": 0,
+      "leak_rate": 0.0,
+      "leak_ci95": [
+        0,
+        0.5615060804490177
+      ],
+      "median_ms": 544.38,
+      "p95_ms": 649.19,
+      "failed": 0
+    }
+  },
+  "paired_memory": {
+    "pairs": 1,
+    "a_only": 0,
+    "b_only": 1,
+    "effect": 1.0,
+    "p_value": 1.0
+  },
+  "srm": {
+    "a": 1,
+    "b": 3,
+    "chi_square": 1.0,
+    "p_value": 0.31731050786291404,
+    "detected": false
+  },
+  "guardrails": {
+    "zero_leaks": true,
+    "valid_rate": 1.0,
+    "valid_rate_at_least_95pct": true
+  },
+  "primary_passed": false,
+  "overall_passed": false
+}

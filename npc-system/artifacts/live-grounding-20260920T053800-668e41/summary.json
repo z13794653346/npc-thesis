@@ -1,0 +1,36 @@
+{
+  "model_calls": 10,
+  "review_calls": 7,
+  "max_http_attempts": 20,
+  "checks": [
+    {
+      "case": "baseline-1",
+      "passed": true
+    },
+    {
+      "case": "baseline-3",
+      "passed": true
+    },
+    {
+      "case": "baseline-4",
+      "passed": true
+    },
+    {
+      "case": "supported-identity",
+      "passed": true
+    },
+    {
+      "case": "greeting-owner",
+      "passed": true
+    },
+    {
+      "case": "greeting-mechanic",
+      "passed": false
+    },
+    {
+      "case": "greeting-traveler",
+      "passed": false
+    }
+  ],
+  "note": "固定旧错误样本与少量正常样本的开发复测，不是正式准确率。"
+}

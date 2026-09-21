@@ -114,6 +114,12 @@ SQLite 会话 JSON 快照 + 独立请求账本；请求去重与内容冲突检�
 │   │   ├── src/                                # App / Notebook / DebugPanel / store / api
 │   │   └── e2e/game.spec.ts                    # Playwright 端到端测试
 │   ├── scripts/                                # 真实模型冒烟与接地性脚本
+│   ├── artifacts/                              # 实验与测试证据（55 文件 / 3.8 MB）
+│   │   ├── agents-v2-formal-20260920/          # 正式实验原始记录 records.jsonl + report.json/md
+│   │   ├── agents-v2-formal-fixtures-20260920.json   # 预注册固定夹具
+│   │   ├── agents-v2-pilot-20260920/           # 试点实验
+│   │   ├── live-grounding-*/ live-agents-*/ live-smoke-*/  # 接地性、真实模型联调与冒烟记录
+│   │   └── backend-tests*.xml                  # 各次后端测试 JUnit 报告
 │   ├── docs/superpowers/                       # 设计规格与实施计划
 │   ├── README.md                               # 代码级说明（启动、演示流程、限制）
 │   ├── CONTRACT.md                             # 接口约定
@@ -277,15 +283,26 @@ npm run test:e2e                     # 4 项通过
 
 ## 数据与证据材料说明
 
-论文附录 B 列出三项正式实验材料的 SHA-256。这些原始记录位于 `npc-system/artifacts/`：
+论文附录 B 列出三项正式实验材料的 SHA-256。这三份材料**已随仓库一同托管**（`npc-system/artifacts/`，55 个文件 / 3.8 MB），可直接按下表核对：
 
-| 材料 | 路径 | SHA-256 |
+| 材料 | 仓库内路径 | SHA-256（已核对一致） |
 | --- | --- | --- |
-| 固定夹具 | `artifacts/agents-v2-formal-fixtures-20260920.json` | `154356224e2ad56f4d620cf7e2abf890d7a9120b637ce43a2aa4fa7ed32d699f` |
-| 原始记录 | `artifacts/agents-v2-formal-20260920/records.jsonl` | `dda7d84a0ae292aec55496af88d6ae41e227805e2e2373f50d3a38d636ef30af` |
-| 机器报告 | `artifacts/agents-v2-formal-20260920/report.json` | `543a021871b982f2bdfc16e85cd67646f339da1859f6075834396102f5c8ea6c` |
+| 固定夹具 | `npc-system/artifacts/agents-v2-formal-fixtures-20260920.json` | `154356224e2ad56f4d620cf7e2abf890d7a9120b637ce43a2aa4fa7ed32d699f` |
+| 原始记录 | `npc-system/artifacts/agents-v2-formal-20260920/records.jsonl` | `dda7d84a0ae292aec55496af88d6ae41e227805e2e2373f50d3a38d636ef30af` |
+| 机器报告 | `npc-system/artifacts/agents-v2-formal-20260920/report.json` | `543a021871b982f2bdfc16e85cd67646f339da1859f6075834396102f5c8ea6c` |
 
-> ⚠️ **`artifacts/`、`output/`、`data/` 当前被 `.gitignore` 排除，未纳入本仓库。** 因此本仓库的版本历史不含实验原始数据；如需完整证据链，请按下方命令重新生成，或在 `.gitignore` 中移除 `artifacts/` 后补提交。
+核对方式：
+
+```bash
+cd npc-system/artifacts
+sha256sum agents-v2-formal-fixtures-20260920.json \
+          agents-v2-formal-20260920/records.jsonl \
+          agents-v2-formal-20260920/report.json
+```
+
+`artifacts/` 除正式实验外还包含开发冒烟、缺陷复测、接地性与试点实验的记录，以及各次后端测试的 JUnit XML。**前两类数据不并入正式统计**，仅作过程留存。
+
+> `output/`（浏览器截图与 Playwright 输出）与 `data/`（本机个人存档）仍不被跟踪：前者可由 `npm run test:e2e` 重新生成，后者属于本机运行数据，不应入库。
 
 复现实验会再次产生费用，且**不得覆盖原始数据**：
 
@@ -315,7 +332,7 @@ uv run python -m app.agent_experiments report new-run/records.jsonl --output new
 
 - `.env` —— 含 `DEEPSEEK_API_KEY` 等本机配置，**任何情况下都不得提交**
 - `.venv/`、`.venv-win/`、`frontend/node_modules/`、各类缓存与构建产物
-- `artifacts/`、`output/`、`data/` —— 实验与运行产物、个人存档
+- `output/`、`data/` —— 浏览器测试输出与本机个人存档（`artifacts/` 已纳入仓库，见上一节）
 - 学校下发或第三方提供的政策与模板文件（三方协议、安全责任书、知情同意书、管理办法、教务〔2026〕88 号通知等）
 - 任务书各版本（含修正版 docx 与预览 PDF）—— 论文与任务书已保持题名一致，但本轮未纳入仓库
 - `.agents/`、`.omx/`、`PROJECT_MEMORY.md` —— 工具产物，不属于论文交付物
