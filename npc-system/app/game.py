@@ -340,7 +340,7 @@ def player_view(s):
     )
 
 
-def build_context(s, npc, query, memory_enabled=True, budget=12000):
+def build_context(s, npc, query, memory_enabled=True, budget=12000, retriever=None):
     """Budget is Unicode characters, not tokenizer tokens; trace reports actual input."""
     if npc not in s["npcs"]:
         raise ValueError("角色不存在")
@@ -355,19 +355,20 @@ def build_context(s, npc, query, memory_enabled=True, budget=12000):
         and k["event_id"] is None
         and (k["id"] not in s["scene"]["clues"] or k["id"] in s["player_clues"])
     ]
-    candidates = []
-    query_terms = set(query)
-    for m in s["memories"]:
-        if m["npc_id"] != npc or m["event_id"] in invalid:
-            continue
-        relevance = len(query_terms & set(m["text"])) / max(1, len(query_terms))
-        for aliases in s["scene"]["aliases"].values():
-            if any(a in query for a in aliases) and any(a in m["text"] for a in aliases):
-                relevance = max(relevance, 0.8)
-        score = 0.6 * relevance + 0.2 / (1 + max(0, s["round"] - m["round"]))
-        score += 0.2 * m["importance"]
-        candidates.append({**m, "score": round(score, 6)})
-    candidates.sort(key=lambda x: (-x["score"], x["id"]))
+    from app.memory import lexical_rank
+
+    # No unscoped memory is ever passed to an embedding model or its cache.
+    authorized = [
+        m for m in s["memories"] if m["npc_id"] == npc and m["event_id"] not in invalid
+    ]
+    retrieval = {
+        "retrieval_strategy": "lexical" if memory_enabled else "disabled",
+        "fallback_reason": None,
+    }
+    if retriever is not None and memory_enabled:
+        candidates, retrieval = retriever.rank(authorized, query, s["round"], s["scene"]["aliases"])
+    else:
+        candidates = lexical_rank(authorized, query, s["round"], s["scene"]["aliases"])
     selected = candidates[:6] if memory_enabled else []
     history = [m for m in s["messages"] if m["npc_id"] == npc]
     rounds = sorted({m["round"] for m in history})[-8:]
@@ -396,6 +397,7 @@ def build_context(s, npc, query, memory_enabled=True, budget=12000):
     if len(json.dumps(payload, ensure_ascii=False)) > budget:
         raise ValueError("当前输入超过上下文预算，请缩短文本。")
     trace = {
+        **retrieval,
         "npc_id": npc,
         "session_id": s["id"],
         "candidates": candidates,

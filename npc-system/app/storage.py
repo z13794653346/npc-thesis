@@ -1,4 +1,4 @@
-"""SQLite snapshot + request ledger. All game mutations commit as one transaction."""
+"""ORM snapshot + request ledger. Game mutations commit in one transaction."""
 
 import json
 import sqlite3
@@ -6,129 +6,182 @@ import time
 from contextlib import contextmanager
 from pathlib import Path
 
+from sqlalchemy import create_engine, event, select, update
+from sqlalchemy.engine import make_url
+from sqlalchemy.exc import SQLAlchemyError
+from sqlalchemy.orm import Session
+from sqlalchemy.pool import StaticPool
+
+from app.db_models import Base, GameSession, Request
+
 
 class Conflict(Exception):
     pass
 
 
+class StorageError(Exception):
+    """Database failure, independent of the configured backend."""
+
+
+def dumps(value):
+    return json.dumps(value, ensure_ascii=False)
+
+
+def normalize_database_url(value):
+    """Use the installed PostgreSQL driver when a URL leaves it unspecified."""
+    url = make_url(value)
+    if url.drivername == "postgresql":
+        url = url.set(drivername="postgresql+psycopg")
+    return url
+
+
 class Store:
     def __init__(self, path):
         self.path = str(path)
-        Path(path).parent.mkdir(parents=True, exist_ok=True)
-        with self.connection() as db:
-            db.executescript("""
-                PRAGMA journal_mode=WAL;
-                CREATE TABLE IF NOT EXISTS sessions (
-                    id TEXT PRIMARY KEY, version INTEGER NOT NULL, state TEXT NOT NULL
-                );
-                CREATE TABLE IF NOT EXISTS requests (
-                    session_id TEXT NOT NULL REFERENCES sessions(id),
-                    request_id TEXT NOT NULL, fingerprint TEXT NOT NULL,
-                    status TEXT NOT NULL, created REAL NOT NULL,
-                    result TEXT, trace TEXT, http_status INTEGER NOT NULL DEFAULT 200,
-                    PRIMARY KEY(session_id, request_id)
-                );
-            """)
+        url = normalize_database_url(self.path if "://" in self.path else "sqlite:///" + self.path)
+        if url.get_backend_name() not in {"sqlite", "postgresql"}:
+            raise ValueError("Only SQLite and PostgreSQL are supported.")
+        options = {}
+        if url.get_backend_name() == "sqlite":
+            if url.database and url.database != ":memory:":
+                Path(url.database).parent.mkdir(parents=True, exist_ok=True)
+            options["connect_args"] = {"timeout": 5, "check_same_thread": False}
+            if url.database in {None, "", ":memory:"}:
+                options["poolclass"] = StaticPool
+        self.engine = create_engine(url, **options)
+        self._sqlite = self.engine.dialect.name == "sqlite"
+        if self._sqlite:
+
+            @event.listens_for(self.engine, "connect")
+            def configure_sqlite(db, record):
+                cursor = db.cursor()
+                cursor.execute("PRAGMA foreign_keys=ON")
+                cursor.close()
+
+        try:
+            if self._sqlite:
+                with self.engine.connect() as db:
+                    db.exec_driver_sql("PRAGMA journal_mode=WAL")
+            Base.metadata.create_all(self.engine)
+        except SQLAlchemyError as exc:
+            raise StorageError("Database initialization failed.") from exc
 
     @contextmanager
     def connection(self):
-        db = sqlite3.connect(self.path, timeout=5)
-        db.row_factory = sqlite3.Row
-        db.execute("PRAGMA foreign_keys=ON")
-        try:
-            with db:
+        """Maintenance interface; SQLite retains its native SQL API."""
+        if not self._sqlite:
+            with self.engine.begin() as db:
                 yield db
+            return
+        db = self.engine.raw_connection()
+        db.driver_connection.row_factory = sqlite3.Row
+        try:
+            yield db
+            db.commit()
+        except Exception:
+            db.rollback()
+            raise
         finally:
+            db.driver_connection.row_factory = None
             db.close()
 
+    @contextmanager
+    def _transaction(self, *, write=False):
+        try:
+            with Session(self.engine) as db, db.begin():
+                if write and self._sqlite:
+                    db.connection().exec_driver_sql("BEGIN IMMEDIATE")
+                yield db
+        except SQLAlchemyError as exc:
+            raise StorageError("Database operation failed.") from exc
+
     def create(self, state):
-        with self.connection() as db:
-            db.execute(
-                "INSERT INTO sessions VALUES(?,?,?)",
-                (state["id"], state["version"], json.dumps(state, ensure_ascii=False)),
-            )
+        with self._transaction(write=True) as db:
+            db.add(GameSession(id=state["id"], version=state["version"], state=dumps(state)))
 
     def get(self, sid):
-        with self.connection() as db:
-            row = db.execute("SELECT state FROM sessions WHERE id=?", (sid,)).fetchone()
+        with self._transaction() as db:
+            row = db.get(GameSession, sid)
             if row is None:
                 raise KeyError(sid)
-            return json.loads(row["state"])
+            return json.loads(row.state)
 
     def reserve(self, sid, rid, fingerprint):
-        with self.connection() as db:
-            db.execute("BEGIN IMMEDIATE")
-            row = db.execute("SELECT state FROM sessions WHERE id=?", (sid,)).fetchone()
+        with self._transaction(write=True) as db:
+            query = select(GameSession).where(GameSession.id == sid)
+            if not self._sqlite:
+                query = query.with_for_update()
+            row = db.scalar(query)
             if row is None:
                 raise KeyError(sid)
-            prior = db.execute(
-                "SELECT * FROM requests WHERE session_id=? AND request_id=?", (sid, rid)
-            ).fetchone()
+            prior = db.get(Request, (sid, rid))
             if prior:
-                if prior["fingerprint"] != fingerprint:
+                if prior.fingerprint != fingerprint:
                     raise Conflict("同一请求编号不能用于不同内容。")
-                if prior["result"]:
-                    return (
-                        json.loads(row["state"]),
-                        json.loads(prior["result"]),
-                        prior["http_status"],
-                    )
-                if time.time() - prior["created"] > 120:
-                    # Never retry an expired claim with the same key: the old worker may live.
+                if prior.result:
+                    return json.loads(row.state), json.loads(prior.result), prior.http_status
+                if time.time() - prior.created > 120:
                     raise Conflict("该请求已过期，请使用新的请求编号重试。")
-                return json.loads(row["state"]), None, 202
-            db.execute(
-                "INSERT INTO requests(session_id,request_id,fingerprint,status,created) VALUES(?,?,?,?,?)",
-                (sid, rid, fingerprint, "processing", time.time()),
+                return json.loads(row.state), None, 202
+            db.add(
+                Request(
+                    session_id=sid,
+                    request_id=rid,
+                    fingerprint=fingerprint,
+                    status="processing",
+                    created=time.time(),
+                )
             )
-            return json.loads(row["state"]), None, 0
+            return json.loads(row.state), None, 0
 
     def commit(self, state, expected_version, rid, result, trace):
-        with self.connection() as db:
-            db.execute("BEGIN IMMEDIATE")
+        with self._transaction(write=True) as db:
             changed = db.execute(
-                "UPDATE sessions SET version=?,state=? WHERE id=? AND version=?",
-                (
-                    state["version"],
-                    json.dumps(state, ensure_ascii=False),
-                    state["id"],
-                    expected_version,
-                ),
+                update(GameSession)
+                .where(GameSession.id == state["id"], GameSession.version == expected_version)
+                .values(version=state["version"], state=dumps(state))
             ).rowcount
             if changed != 1:
                 raise Conflict("状态已被另一操作更新，本次未执行，请重试。")
             db.execute(
-                "UPDATE requests SET status=?,result=?,trace=?,http_status=200 WHERE session_id=? AND request_id=?",
-                (
-                    result["status"],
-                    json.dumps(result, ensure_ascii=False),
-                    json.dumps(trace, ensure_ascii=False),
-                    state["id"],
-                    rid,
-                ),
+                update(Request)
+                .where(Request.session_id == state["id"], Request.request_id == rid)
+                .values(
+                    status=result["status"],
+                    result=dumps(result),
+                    trace=dumps(trace),
+                    http_status=200,
+                )
             )
 
     def fail(self, sid, rid, result, trace, http_status=200):
-        with self.connection() as db:
+        with self._transaction(write=True) as db:
             db.execute(
-                "UPDATE requests SET status='failed',result=?,trace=?,http_status=? WHERE session_id=? AND request_id=?",
-                (
-                    json.dumps(result, ensure_ascii=False),
-                    json.dumps(trace, ensure_ascii=False),
-                    http_status,
-                    sid,
-                    rid,
-                ),
+                update(Request)
+                .where(Request.session_id == sid, Request.request_id == rid)
+                .values(
+                    status="failed",
+                    result=dumps(result),
+                    trace=dumps(trace),
+                    http_status=http_status,
+                )
             )
 
     def debug(self, sid):
         state = self.get(sid)
-        with self.connection() as db:
-            rows = db.execute(
-                "SELECT request_id,status,created,trace FROM requests WHERE session_id=? ORDER BY created",
-                (sid,),
+        with self._transaction() as db:
+            rows = db.scalars(
+                select(Request).where(Request.session_id == sid).order_by(Request.created)
             )
             return {
                 "state": state,
-                "requests": [{**dict(r), "trace": json.loads(r["trace"] or "{}")} for r in rows],
+                "requests": [
+                    {
+                        "request_id": row.request_id,
+                        "status": row.status,
+                        "created": row.created,
+                        "trace": json.loads(row.trace or "{}"),
+                    }
+                    for row in rows
+                ],
             }

@@ -6,10 +6,12 @@
 
 针对文字冒险游戏里 NPC 长期记忆中断、角色间知识边界不清、合作行为缺乏可追溯依据三个问题的一个可运行实现，以「雨夜旅店调查」为演示场景。
 
-- 后端 **FastAPI + SQLite**：会话 JSON 快照 + 请求账本，请求幂等、并发版本控制、事务回滚
+- 后端 **FastAPI + LangGraph**：角色视图恢复 → 模型决策 → 依据校验，游戏规则独立执行
+- 存储 **SQLAlchemy 2 + Alembic**：默认 SQLite，可选 PostgreSQL，保留请求幂等、并发版本控制和事务回滚
+- 记忆 **FastEmbed 中文嵌入**：本地 CPU、512 维语义混合检索，先过滤角色权限及失效事件
 - 前端 **Vue 3 + TypeScript + Vite**
 - 大模型只返回 `{intent, evidence_ids, action_id}` 三字段，不能直接生成台词、不能直接改状态
-- 测试：后端 **75 项** pytest、前端 **7 项**、浏览器端到端 **4 项**
+- 测试：后端 **100 项** pytest、前端 **7 项**、浏览器端到端 **4 项**
 - 实验工具与原始记录在 `npc-system/artifacts/`（固定夹具、216 次模型请求原始记录等）
 
 ## 目录结构
@@ -21,7 +23,7 @@ npc-system/    系统实现（FastAPI 后端 app/ + Vue 前端 frontend/ + 测�
 
 ## 快速开始
 
-完整说明见 [npc-system/README.md](npc-system/README.md)。
+完整说明见 [npc-system/README.md](npc-system/README.md)，本次升级与验证见 [框架升级报告](npc-system/FRAMEWORK_UPGRADE_REPORT.md)。
 
 ### Windows
 
@@ -39,6 +41,15 @@ cp .env.example .env          # 填入 DEEPSEEK_API_KEY
 bash start.sh
 ```
 
+首次使用语义记忆，在 `npc-system` 目录执行：
+
+```bash
+uv run python scripts/prepare_embeddings.py
+uv run python scripts/verify_semantic_memory.py
+```
+
+Windows使用 `.venv-win/Scripts/python.exe` 运行相同脚本。首次模型下载需要联网，后续检索在本机执行；嵌入不需要新密钥。未准备模型时明确回退为词法检索，已有规则操作仍可运行。
+
 启动后访问 <http://127.0.0.1:8000>，API 文档在 `/docs`。本版本没有多用户账号系统，请勿绑定公网。
 
 ## 测试
@@ -46,8 +57,8 @@ bash start.sh
 ```bash
 cd npc-system
 uv sync --group dev --frozen
-uv run pytest -q                    # 75 项
-uv run ruff check app tests scripts
+uv run pytest -q                    # 100 项
+uv run ruff check app tests scripts migrations
 
 cd frontend
 npm ci

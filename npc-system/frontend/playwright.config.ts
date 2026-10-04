@@ -15,6 +15,9 @@ export default defineConfig({
     cwd: root,
     url: 'http://127.0.0.1:8000/api/health',
     reuseExistingServer: false,
-    env: { DEEPSEEK_API_KEY: '', NPC_DEBUG: 'false', NPC_DB_PATH: `artifacts/e2e-${process.pid}.sqlite3` },
+    env: {
+      DEEPSEEK_API_KEY: '', NPC_DEBUG: 'false', NPC_DATABASE_URL: '',
+      NPC_MEMORY_MODE: 'lexical', NPC_DB_PATH: `artifacts/e2e-${process.pid}.sqlite3`,
+    },
   },
 })

@@ -1,0 +1,42 @@
+{
+  "kind": "offline_smoke_not_benchmark",
+  "model": "BAAI/bge-small-zh-v1.5",
+  "retrieval_strategy": "semantic_hybrid",
+  "query": "电力恢复了吗",
+  "checks": {
+    "real_semantic_model_used": true,
+    "relevant_memory_first": true,
+    "other_role_excluded": true,
+    "invalid_event_excluded": true
+  },
+  "ranked_candidates": [
+    {
+      "id": "event-000001",
+      "npc_id": "owner",
+      "text": "配电箱修好后，客栈恢复了供电。",
+      "source": "system",
+      "round": 0,
+      "importance": 1.0,
+      "event_id": "event-000001",
+      "score": 0.774228,
+      "semantic_score": 0.615123,
+      "lexical_score": 0.666667,
+      "recency_score": 1.0,
+      "importance_score": 1.0
+    },
+    {
+      "id": "event-000002",
+      "npc_id": "owner",
+      "text": "旅客在大厅登记了姓名。",
+      "source": "system",
+      "round": 0,
+      "importance": 1.0,
+      "event_id": "event-000002",
+      "score": 0.537108,
+      "semantic_score": 0.240882,
+      "lexical_score": 0.166667,
+      "recency_score": 1.0,
+      "importance_score": 1.0
+    }
+  ]
+}

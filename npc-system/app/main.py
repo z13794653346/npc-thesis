@@ -16,7 +16,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 from starlette.middleware.trustedhost import TrustedHostMiddleware
 
-from app.agents import DIALOGUE_VERSION, NpcAgent
+from app.agents import DIALOGUE_VERSION
 from app.game import (
     apply_action,
     available_actions,
@@ -26,7 +26,9 @@ from app.game import (
     tick,
 )
 from app.llm import DeepSeek, ModelError
-from app.storage import Conflict, Store
+from app.memory import DEFAULT_CACHE_DIR, MODEL_NAME, HybridMemoryRetriever
+from app.storage import Conflict, StorageError, Store
+from app.workflow import NpcWorkflow
 
 ROOT = Path(__file__).resolve().parent.parent
 ActionKind = Literal[
@@ -112,13 +114,24 @@ def redact(value, key=""):
     return value
 
 
-def create_app(db_path=None, model=None, debug_token=None):
+def create_app(db_path=None, model=None, debug_token=None, retriever=None):
     load_dotenv(ROOT / ".env", override=False)
-    path = db_path or os.getenv("NPC_DB_PATH", "data/npc.sqlite3")
-    if not Path(path).is_absolute():
+    path = db_path or os.getenv("NPC_DATABASE_URL") or os.getenv("NPC_DB_PATH", "data/npc.sqlite3")
+    if "://" not in str(path) and not Path(path).is_absolute():
         path = ROOT / path
     store = Store(path)
     llm = model if model is not None else DeepSeek()
+    memory_mode = os.getenv("NPC_MEMORY_MODE", "hybrid")
+    if memory_mode not in {"hybrid", "lexical"}:
+        raise ValueError("NPC_MEMORY_MODE must be hybrid or lexical")
+    cache = Path(os.getenv("NPC_EMBEDDING_CACHE", DEFAULT_CACHE_DIR))
+    if not cache.is_absolute():
+        cache = ROOT / cache
+    if memory_mode == "hybrid" and retriever is None:
+        retriever = HybridMemoryRetriever(cache_dir=cache)
+    if memory_mode == "lexical":
+        retriever = None
+    workflow = NpcWorkflow()
     if debug_token is None:
         debug_token = (
             os.getenv("NPC_DEBUG_TOKEN", "")
@@ -130,6 +143,8 @@ def create_app(db_path=None, model=None, debug_token=None):
         TrustedHostMiddleware, allowed_hosts=["localhost", "127.0.0.1", "testserver", "[::1]"]
     )
     app.state.store = store
+    app.state.workflow = workflow
+    app.state.retriever = retriever
 
     @app.middleware("http")
     async def local_origin_guard(request, call_next):
@@ -164,6 +179,10 @@ def create_app(db_path=None, model=None, debug_token=None):
             "model": llm.model,
             "debug_enabled": bool(debug_token),
             "dialogue_version": DIALOGUE_VERSION,
+            "orchestrator": "langgraph",
+            "storage_backend": store.engine.dialect.name,
+            "memory_mode": memory_mode,
+            "embedding_model": MODEL_NAME if memory_mode == "hybrid" else None,
         }
 
     @app.post("/api/sessions")
@@ -199,7 +218,7 @@ def create_app(db_path=None, model=None, debug_token=None):
             raise HTTPException(404, "存档不存在。") from None
         except Conflict as exc:
             raise HTTPException(409, str(exc)) from None
-        except sqlite3.Error:
+        except (sqlite3.Error, StorageError):
             raise HTTPException(503, "存储暂不可用，请稍后重试。") from None
         if previous is not None:
             return JSONResponse(previous, status_code=status)
@@ -243,14 +262,15 @@ def create_app(db_path=None, model=None, debug_token=None):
                 user_text = "[操作] " + label
             else:
                 user_text = body.text
-                agent = NpcAgent.restore(s, npc, user_text)
-                context = agent.context
-                trace["retrieval"] = agent.trace
+                planned = await workflow.decide(s, npc, user_text, model_call, retriever, trace)
+                context = planned["context"]
+                trace["orchestrator"] = "langgraph"
+                trace["workflow_trace"] = planned["workflow_trace"]
+                trace["retrieval"] = planned["retrieval"]
                 trace["agent_id"] = npc
                 trace["dialogue_version"] = DIALOGUE_VERSION
-                raw = await model_call(context)
-                trace["raw_output"] = raw
-                reply, action, decision = agent.resolve(raw)
+                trace["raw_output"] = planned["raw_output"]
+                reply, action, decision = planned["reply"], planned["action"], planned["decision"]
                 trace["decision"] = decision
             outcome = None
             trace["proposed_action"] = action
@@ -297,6 +317,7 @@ def create_app(db_path=None, model=None, debug_token=None):
             ValueError,
             TimeoutError,
             sqlite3.Error,
+            StorageError,
             Conflict,
         ) as exc:
             code = getattr(exc, "code", "invalid_output")
@@ -306,7 +327,7 @@ def create_app(db_path=None, model=None, debug_token=None):
                 explanation = str(exc)
             elif isinstance(exc, Conflict):
                 code, explanation, http_status = "state_conflict", str(exc), 409
-            elif isinstance(exc, sqlite3.Error):
+            elif isinstance(exc, (sqlite3.Error, StorageError)):
                 code, explanation = "storage_error", "存储提交失败，本次游戏状态未改变。"
             elif isinstance(exc, TimeoutError):
                 code, explanation = "model_timeout", "模型请求超时，本次未执行。"
@@ -325,7 +346,7 @@ def create_app(db_path=None, model=None, debug_token=None):
                 store.fail(
                     sid, rid, result, redact(trace, getattr(llm, "api_key", "")), http_status
                 )
-            except sqlite3.Error:
+            except (sqlite3.Error, StorageError):
                 pass  # Database unavailable; do not expose DB paths or raw errors.
             return JSONResponse(result, status_code=http_status)
         except asyncio.CancelledError:
@@ -346,7 +367,7 @@ def create_app(db_path=None, model=None, debug_token=None):
                     redact(trace, getattr(llm, "api_key", "")),
                     500,
                 )
-            except (sqlite3.Error, KeyError):
+            except (sqlite3.Error, StorageError, KeyError):
                 pass  # 清理失败不掩盖原始异常
             raise
         except Exception:
@@ -367,7 +388,7 @@ def create_app(db_path=None, model=None, debug_token=None):
                     redact(trace, getattr(llm, "api_key", "")),
                     500,
                 )
-            except (sqlite3.Error, KeyError):
+            except (sqlite3.Error, StorageError, KeyError):
                 pass  # 清理失败不掩盖原始异常
             raise
 

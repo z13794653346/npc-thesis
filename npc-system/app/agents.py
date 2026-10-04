@@ -35,10 +35,12 @@ class NpcAgent:
     """
 
     @classmethod
-    def restore(cls, state, npc_id, query, memory_enabled=True):
+    def restore(cls, state, npc_id, query, memory_enabled=True, retriever=None):
         if npc_id not in PROFILES:
             raise ValueError("角色不存在")
-        scoped, retrieval = build_context(state, npc_id, query, memory_enabled, budget=10000)
+        scoped, retrieval = build_context(
+            state, npc_id, query, memory_enabled, budget=10000, retriever=retriever
+        )
         agent = cls()
         agent.session_id = state["id"]
         agent.npc_id = npc_id

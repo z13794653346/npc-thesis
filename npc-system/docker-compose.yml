@@ -1,0 +1,18 @@
+services:
+  postgres:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_DB: npc
+      POSTGRES_USER: npc
+      POSTGRES_PASSWORD: ${NPC_POSTGRES_PASSWORD:?Set NPC_POSTGRES_PASSWORD for the local database}
+    ports:
+      - "127.0.0.1:5432:5432"
+    volumes:
+      - npc_postgres:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U npc -d npc"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+volumes:
+  npc_postgres:
