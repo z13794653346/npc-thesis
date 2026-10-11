@@ -18,6 +18,7 @@ from starlette.middleware.trustedhost import TrustedHostMiddleware
 
 from app.agents import DIALOGUE_VERSION
 from app.game import (
+    ContextBudgetError,
     apply_action,
     available_actions,
     message,
@@ -27,7 +28,14 @@ from app.game import (
 )
 from app.llm import DeepSeek, ModelError
 from app.memory import DEFAULT_CACHE_DIR, MODEL_NAME, HybridMemoryRetriever
-from app.storage import Conflict, StorageError, Store
+from app.storage import (
+    EXPIRED_CODE,
+    EXPIRED_MESSAGE,
+    Conflict,
+    RequestExpired,
+    StorageError,
+    Store,
+)
 from app.workflow import NpcWorkflow
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -120,6 +128,11 @@ def create_app(db_path=None, model=None, debug_token=None, retriever=None):
     if "://" not in str(path) and not Path(path).is_absolute():
         path = ROOT / path
     store = Store(path)
+    try:
+        # Best effort: a request killed mid-flight must not stay "processing" forever.
+        store.expire_stale()
+    except (sqlite3.Error, StorageError):
+        pass
     llm = model if model is not None else DeepSeek()
     memory_mode = os.getenv("NPC_MEMORY_MODE", "hybrid")
     if memory_mode not in {"hybrid", "lexical"}:
@@ -145,6 +158,9 @@ def create_app(db_path=None, model=None, debug_token=None, retriever=None):
     app.state.store = store
     app.state.workflow = workflow
     app.state.retriever = retriever
+    # One model call at a time per session: a second concurrent write would pay for a
+    # turn that the optimistic commit can never apply.
+    inflight = set()
 
     @app.middleware("http")
     async def local_origin_guard(request, call_next):
@@ -164,6 +180,49 @@ def create_app(db_path=None, model=None, debug_token=None, retriever=None):
             return store.get(sid)
         except KeyError:
             raise HTTPException(404, "存档不存在。") from None
+
+    async def aload(sid):
+        """read() for the async request path, off the event loop."""
+        try:
+            return await asyncio.to_thread(store.get, sid)
+        except KeyError:
+            raise HTTPException(404, "存档不存在。") from None
+
+    async def failed_result(sid, rid, code, message, status, started, persist=True):
+        """One shape for every rejected 409: a full Result the client can accept."""
+        result = {
+            "request_id": rid,
+            "status": "failed",
+            "reply": message,
+            "action_result": None,
+            "state": player_view(await aload(sid)),
+            "error": {"code": code, "message": message},
+        }
+        if persist:  # A reservation we own must not stay "processing".
+            trace = {
+                "mode": "rejected",
+                "error": code,
+                "elapsed_ms": round((time.monotonic() - started) * 1000, 2),
+            }
+            try:
+                await asyncio.to_thread(
+                    store.fail, sid, rid, result, redact(trace, getattr(llm, "api_key", "")), status
+                )
+            except (sqlite3.Error, StorageError):
+                pass  # 账本写入失败不改变客户端的终态判断
+        return JSONResponse(result, status_code=status)
+
+    def fail_offline(sid, rid, code, message, trace, status=500):
+        """Terminal write for paths where awaiting the event loop is unsafe."""
+        result = {
+            "request_id": rid,
+            "status": "failed",
+            "reply": message,
+            "action_result": None,
+            "state": player_view(store.get(sid)),
+            "error": {"code": code, "message": message},
+        }
+        store.fail(sid, rid, result, redact(trace, getattr(llm, "api_key", "")), status)
 
     def debug_guard(token):
         if not debug_token:
@@ -203,21 +262,21 @@ def create_app(db_path=None, model=None, debug_token=None, retriever=None):
     async def execute(sid, body, direct=False):
         started = time.monotonic()
 
-        async def model_call(context):
-            remaining = getattr(llm, "timeout", 30) - (time.monotonic() - started)
-            async with asyncio.timeout(max(0, remaining)):
-                return await llm.complete(context)
-
         rid, npc = body.request_id, body.npc_id
         fingerprint = hashlib.sha256(
             json.dumps({"direct": direct, **body.model_dump()}, sort_keys=True).encode()
         ).hexdigest()
         try:
-            s, previous, status = store.reserve(sid, rid, fingerprint)
+            s, previous, status = await asyncio.to_thread(store.reserve, sid, rid, fingerprint)
         except KeyError:
             raise HTTPException(404, "存档不存在。") from None
+        except RequestExpired:
+            return await failed_result(sid, rid, EXPIRED_CODE, EXPIRED_MESSAGE, 409, started)
         except Conflict as exc:
-            raise HTTPException(409, str(exc)) from None
+            # Someone else's reservation (fingerprint clash): report it, never rewrite it.
+            return await failed_result(
+                sid, rid, "state_conflict", str(exc), 409, started, persist=False
+            )
         except (sqlite3.Error, StorageError):
             raise HTTPException(503, "存储暂不可用，请稍后重试。") from None
         if previous is not None:
@@ -234,7 +293,26 @@ def create_app(db_path=None, model=None, debug_token=None, retriever=None):
                 },
                 status_code=202,
             )
+        if sid in inflight:
+            # Another turn is already running for this session; refuse before spending
+            # tokens on a state the optimistic commit could never apply.
+            return await failed_result(
+                sid, rid, "session_busy", "该存档有另一个请求正在处理，请稍后重试。", 409, started
+            )
+        inflight.add(sid)
+        try:
+            return await process(sid, body, direct, s, rid, npc, started)
+        finally:
+            inflight.discard(sid)
+
+    async def process(sid, body, direct, s, rid, npc, started):
         expected = s["version"]
+
+        async def model_call(context):
+            remaining = getattr(llm, "timeout", 30) - (time.monotonic() - started)
+            async with asyncio.timeout(max(0, remaining)):
+                return await llm.complete(context)
+
         trace = {
             "model": llm.model if not direct else None,
             "mode": "model" if not direct else "rules",
@@ -309,7 +387,9 @@ def create_app(db_path=None, model=None, debug_token=None, retriever=None):
                 "error": None,
             }
             trace["elapsed_ms"] = round((time.monotonic() - started) * 1000, 2)
-            store.commit(s, expected, rid, result, redact(trace, getattr(llm, "api_key", "")))
+            await asyncio.to_thread(
+                store.commit, s, expected, rid, result, redact(trace, getattr(llm, "api_key", ""))
+            )
             return result
         except (
             ModelError,
@@ -325,6 +405,8 @@ def create_app(db_path=None, model=None, debug_token=None, retriever=None):
             http_status = 200
             if isinstance(exc, ModelError):
                 explanation = str(exc)
+            elif isinstance(exc, ContextBudgetError):
+                code, explanation = exc.code, "本次输入过长，超出上下文预算，本次未执行。"
             elif isinstance(exc, Conflict):
                 code, explanation, http_status = "state_conflict", str(exc), 409
             elif isinstance(exc, (sqlite3.Error, StorageError)):
@@ -336,57 +418,43 @@ def create_app(db_path=None, model=None, debug_token=None, retriever=None):
                 "status": "failed",
                 "reply": explanation,
                 "action_result": None,
-                "state": player_view(read(sid)),
+                "state": player_view(await aload(sid)),
                 "error": {"code": code, "message": explanation},
             }
             trace.update(
                 {"error": code, "elapsed_ms": round((time.monotonic() - started) * 1000, 2)}
             )
             try:
-                store.fail(
-                    sid, rid, result, redact(trace, getattr(llm, "api_key", "")), http_status
+                await asyncio.to_thread(
+                    store.fail,
+                    sid,
+                    rid,
+                    result,
+                    redact(trace, getattr(llm, "api_key", "")),
+                    http_status,
                 )
             except (sqlite3.Error, StorageError):
                 pass  # Database unavailable; do not expose DB paths or raw errors.
             return JSONResponse(result, status_code=http_status)
         except asyncio.CancelledError:
             # Client disconnected or task cancelled: release the reservation so the
-            # request_id is not burned as an orphaned "processing" row.
+            # request_id is not burned as an orphaned "processing" row. Shielded: a
+            # second cancellation must not skip the ledger update.
             try:
-                store.fail(
-                    sid,
-                    rid,
-                    {
-                        "request_id": rid,
-                        "status": "failed",
-                        "reply": "请求已取消，本次未执行。",
-                        "action_result": None,
-                        "state": player_view(read(sid)),
-                        "error": {"code": "cancelled", "message": "请求已取消，本次未执行。"},
-                    },
-                    redact(trace, getattr(llm, "api_key", "")),
-                    500,
+                await asyncio.shield(
+                    asyncio.to_thread(
+                        fail_offline, sid, rid, "cancelled", "请求已取消，本次未执行。", trace
+                    )
                 )
-            except (sqlite3.Error, StorageError, KeyError):
+            except (sqlite3.Error, StorageError, KeyError, asyncio.CancelledError):
                 pass  # 清理失败不掩盖原始异常
             raise
         except Exception:
             # Any unlisted failure after reserve() must still mark the request failed,
             # otherwise the same request_id retries as 202 until it permanently 409s.
             try:
-                store.fail(
-                    sid,
-                    rid,
-                    {
-                        "request_id": rid,
-                        "status": "failed",
-                        "reply": "服务器处理出错，本次未执行。",
-                        "action_result": None,
-                        "state": player_view(read(sid)),
-                        "error": {"code": "internal_error", "message": "服务器处理出错，本次未执行。"},
-                    },
-                    redact(trace, getattr(llm, "api_key", "")),
-                    500,
+                await asyncio.to_thread(
+                    fail_offline, sid, rid, "internal_error", "服务器处理出错，本次未执行。", trace
                 )
             except (sqlite3.Error, StorageError, KeyError):
                 pass  # 清理失败不掩盖原始异常

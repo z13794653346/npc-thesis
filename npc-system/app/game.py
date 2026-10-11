@@ -9,6 +9,21 @@ from uuid import uuid4
 SCENE = json.loads(Path(__file__).with_name("scene.json").read_text(encoding="utf-8"))
 
 
+class ContextBudgetError(ValueError):
+    """The assembled context cannot fit the character budget after trimming.
+
+    Distinct from a malformed model answer: the API must not report it as
+    ``invalid_output``.
+    """
+
+    code = "context_budget_exceeded"
+
+    def __init__(self, message, size=0, budget=0):
+        super().__init__(message)
+        self.size = size
+        self.budget = budget
+
+
 def now():
     return datetime.now(UTC).isoformat()
 
@@ -358,9 +373,7 @@ def build_context(s, npc, query, memory_enabled=True, budget=12000, retriever=No
     from app.memory import lexical_rank
 
     # No unscoped memory is ever passed to an embedding model or its cache.
-    authorized = [
-        m for m in s["memories"] if m["npc_id"] == npc and m["event_id"] not in invalid
-    ]
+    authorized = [m for m in s["memories"] if m["npc_id"] == npc and m["event_id"] not in invalid]
     retrieval = {
         "retrieval_strategy": "lexical" if memory_enabled else "disabled",
         "fallback_reason": None,
@@ -389,13 +402,25 @@ def build_context(s, npc, query, memory_enabled=True, budget=12000, retriever=No
         "actions": actions,
         "player_input": query,
     }
+
     # No trusted text is assembled from debug data or another NPC's history.
-    while len(json.dumps(payload, ensure_ascii=False)) > budget and selected:
+    def context_size():
+        return len(json.dumps(payload, ensure_ascii=False))
+
+    dropped_knowledge, size = [], context_size()
+    while size > budget and selected:
         selected.pop()
-    while len(json.dumps(payload, ensure_ascii=False)) > budget and history:
+        size = context_size()
+    while size > budget and history:
         history.pop(0)
-    if len(json.dumps(payload, ensure_ascii=False)) > budget:
-        raise ValueError("当前输入超过上下文预算，请缩短文本。")
+        size = context_size()
+    # A character's own facts are dropped last: an over-budget turn must degrade
+    # instead of failing, and the trace still shows what was left out.
+    while size > budget and knowledge:
+        dropped_knowledge.append(knowledge.pop()["id"])
+        size = context_size()
+    if size > budget:
+        raise ContextBudgetError("当前输入超过上下文预算，请缩短文本。", size=size, budget=budget)
     trace = {
         **retrieval,
         "npc_id": npc,
@@ -403,8 +428,9 @@ def build_context(s, npc, query, memory_enabled=True, budget=12000, retriever=No
         "candidates": candidates,
         "selected_ids": [m["id"] for m in selected],
         "history_ids": [m["id"] for m in history],
+        "dropped_knowledge_ids": dropped_knowledge,
         "memory_enabled": memory_enabled,
-        "context_chars": len(json.dumps(payload, ensure_ascii=False)),
+        "context_chars": size,
         "known_ids": sorted(known_ids),
         "context": copy.deepcopy(payload),
     }

@@ -19,12 +19,42 @@ class Conflict(Exception):
     pass
 
 
+class RequestExpired(Conflict):
+    """A reservation left behind by a request that died mid-flight.
+
+    It must become terminal instead of answering 202 until the row is retried
+    into a permanent conflict.
+    """
+
+
 class StorageError(Exception):
     """Database failure, independent of the configured backend."""
 
 
+# A reservation older than this is abandoned: the client is gone or the process
+# was killed between reserve() and commit()/fail().
+STALE_RESERVATION_SECONDS = 120
+EXPIRED_MESSAGE = "上一次请求已中途中断，本次未执行，请重试。"
+EXPIRED_CODE = "request_expired"
+
+
 def dumps(value):
     return json.dumps(value, ensure_ascii=False)
+
+
+def expired_payload(rid):
+    """Terminal result for an abandoned reservation.
+
+    ``state`` stays empty here: only the API layer may build a player view.
+    """
+    return {
+        "request_id": rid,
+        "status": "failed",
+        "reply": EXPIRED_MESSAGE,
+        "action_result": None,
+        "state": None,
+        "error": {"code": EXPIRED_CODE, "message": EXPIRED_MESSAGE},
+    }
 
 
 def normalize_database_url(value):
@@ -120,8 +150,10 @@ class Store:
                     raise Conflict("同一请求编号不能用于不同内容。")
                 if prior.result:
                     return json.loads(row.state), json.loads(prior.result), prior.http_status
-                if time.time() - prior.created > 120:
-                    raise Conflict("该请求已过期，请使用新的请求编号重试。")
+                if time.time() - prior.created > STALE_RESERVATION_SECONDS:
+                    # Only the API layer can build a player view, so it owns the
+                    # terminal answer; this transaction just refuses to keep 202-ing.
+                    raise RequestExpired("该请求已中断，已按失败处理，请重试。")
                 return json.loads(row.state), None, 202
             db.add(
                 Request(
@@ -133,6 +165,22 @@ class Store:
                 )
             )
             return json.loads(row.state), None, 0
+
+    def expire_stale(self, sid=None, max_age=STALE_RESERVATION_SECONDS):
+        """Fail abandoned reservations so no request_id stays 'processing' forever."""
+        cutoff = time.time() - max_age
+        with self._transaction(write=True) as db:
+            query = select(Request).where(
+                Request.status == "processing", Request.result.is_(None), Request.created < cutoff
+            )
+            if sid is not None:
+                query = query.where(Request.session_id == sid)
+            stale = list(db.scalars(query))
+            for row in stale:
+                row.status = "failed"
+                row.result = dumps(expired_payload(row.request_id))
+                row.http_status = 409
+            return len(stale)
 
     def commit(self, state, expected_version, rid, result, trace):
         with self._transaction(write=True) as db:

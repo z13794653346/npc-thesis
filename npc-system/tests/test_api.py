@@ -160,15 +160,18 @@ def test_db_commit_failure_rolls_back(tmp_path):
     assert c.get(f"/api/sessions/{s['id']}").json() == s
 
 
-def test_concurrent_model_call_cannot_commit_stale_state(tmp_path):
+def test_concurrent_writes_refuse_to_pay_for_the_same_session_twice(tmp_path):
+    """A second in-flight turn for one session is refused before any model call."""
     import asyncio
 
     from app.main import create_app
 
     entered, release = Event(), Event()
+    calls = []
 
     class SlowModel(FakeModel):
         async def complete(self, context):
+            calls.append(context)
             entered.set()
             await asyncio.to_thread(release.wait, 5)
             return await super().complete(context)
@@ -180,20 +183,23 @@ def test_concurrent_model_call_cannot_commit_stale_state(tmp_path):
     with ThreadPoolExecutor(1) as pool:
         pending = pool.submit(c.post, url + "/interactions", json=payload)
         assert entered.wait(5)
+        # Same request_id and payload: idempotent replay, still "processing".
         assert c.post(url + "/interactions", json=payload).status_code == 202
-        assert (
-            c.post(
-                url + "/actions",
-                json={
-                    "request_id": "fast",
-                    "npc_id": "owner",
-                    "action": {"kind": "assist", "target": "register"},
-                },
-            ).status_code
-            == 200
+        busy = c.post(
+            url + "/actions",
+            json={
+                "request_id": "fast",
+                "npc_id": "owner",
+                "action": {"kind": "assist", "target": "register"},
+            },
         )
+        assert busy.status_code == 409
+        assert busy.json()["error"]["code"] == "session_busy"
+        # A rejected 409 is a full Result: the client can resynchronise from it.
+        assert busy.json()["state"]["version"] == 0
         release.set()
-        assert pending.result().status_code == 409
+        assert pending.result().status_code == 200
+    assert len(calls) == 1  # The refused turn never reached the model.
     assert c.get(url).json()["version"] == 1
 
 
@@ -459,3 +465,84 @@ def test_decision_call_obeys_model_deadline(tmp_path):
     ).json()
     assert r["status"] == "failed" and r["error"]["code"] == "model_timeout"
     assert c.get(f"/api/sessions/{s['id']}").json() == s
+
+
+def test_reserve_conflict_returns_a_full_result_body(client):
+    s = client.post("/api/sessions").json()
+    url = f"/api/sessions/{s['id']}/actions"
+    payload = {
+        "request_id": "same",
+        "npc_id": "owner",
+        "action": {"kind": "assist", "target": "register"},
+    }
+    assert client.post(url, json=payload).status_code == 200
+    payload["action"]["target"] = "sandbags"
+    conflict = client.post(url, json=payload)
+    assert conflict.status_code == 409
+    body = conflict.json()
+    # One 409 shape: a Result the frontend can acceptState() from, never a bare error.
+    assert set(body) == {
+        "request_id",
+        "status",
+        "reply",
+        "action_result",
+        "state",
+        "error",
+    }
+    assert body["error"]["code"] == "state_conflict"
+    assert body["status"] == "failed" and body["state"]["version"] == 1
+
+
+def test_abandoned_request_is_terminal_instead_of_processing_forever(tmp_path):
+    import asyncio
+    import time as clock
+
+    from app.main import create_app
+
+    entered, release = Event(), Event()
+
+    class HangingModel(FakeModel):
+        async def complete(self, context):
+            entered.set()
+            await asyncio.to_thread(release.wait, 5)
+            return await super().complete(context)
+
+    app = create_app(db_path=tmp_path / "abandoned.sqlite", model=HangingModel())
+    c = TestClient(app)
+    s = c.post("/api/sessions").json()
+    url = f"/api/sessions/{s['id']}/interactions"
+    body = {"request_id": "dead", "npc_id": "owner", "text": "你好"}
+    with ThreadPoolExecutor(1) as pool:
+        pending = pool.submit(c.post, url, json=body)
+        assert entered.wait(5)
+        # The first attempt is stuck: age its reservation past the abandoned threshold.
+        with app.state.store.connection() as db:
+            db.execute(
+                "UPDATE requests SET created = ? WHERE request_id = 'dead'",
+                (clock.time() - 3600,),
+            )
+        stale = c.post(url, json=body)
+        assert stale.status_code == 409
+        assert stale.json()["error"]["code"] == "request_expired"
+        assert stale.json()["state"]["version"] == 0
+        release.set()
+        assert pending.result().status_code == 200
+    assert c.get(f"/api/sessions/{s['id']}").json()["version"] == 1
+
+
+def test_context_budget_failure_is_not_reported_as_model_output_error(tmp_path):
+    from app.main import create_app
+
+    app = create_app(db_path=tmp_path / "budget.sqlite", model=FakeModel())
+    c = TestClient(app)
+    s = c.post("/api/sessions").json()
+    raw = app.state.store.get(s["id"])
+    raw["scene"]["intro"] = "铺垫" * 7000  # 14000 characters: over any 10000 budget.
+    app.state.store.commit(raw, raw["version"], "seed", {"status": "ok"}, {})
+    r = c.post(
+        f"/api/sessions/{s['id']}/interactions",
+        json={"request_id": "big", "npc_id": "owner", "text": "你好"},
+    ).json()
+    assert r["status"] == "failed"
+    assert r["error"]["code"] == "context_budget_exceeded"
+    assert "上下文预算" in r["reply"]

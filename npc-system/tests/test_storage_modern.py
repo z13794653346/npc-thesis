@@ -1,11 +1,12 @@
 import json
 import sqlite3
+import time
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 import pytest
 
-from app.storage import Conflict, Store
+from app.storage import Conflict, RequestExpired, Store
 
 
 def test_orm_engine_and_reservation_concurrency(tmp_path):
@@ -17,6 +18,21 @@ def test_orm_engine_and_reservation_concurrency(tmp_path):
     assert sorted(r[2] for r in results) == [0, 202, 202, 202]
     with pytest.raises(Conflict):
         store.reserve("s", "r", "different")
+
+
+def test_abandoned_reservation_is_terminal_instead_of_processing_forever(tmp_path):
+    store = Store(tmp_path / "abandoned.sqlite")
+    store.create({"id": "s", "version": 0})
+    assert store.reserve("s", "r", "f")[2] == 0
+    with store.connection() as db:
+        db.execute("UPDATE requests SET created = ? WHERE request_id = 'r'", (time.time() - 3600,))
+    with pytest.raises(RequestExpired):
+        store.reserve("s", "r", "f")
+    assert store.expire_stale() == 1
+    state, payload, status = store.reserve("s", "r", "f")
+    assert state == {"id": "s", "version": 0}
+    assert status == 409 and payload["error"]["code"] == "request_expired"
+    assert store.expire_stale() == 0  # Terminal rows are not swept twice.
 
 
 def test_commit_rolls_back_request_and_state(tmp_path):

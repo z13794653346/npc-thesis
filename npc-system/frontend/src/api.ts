@@ -47,7 +47,10 @@ export function createApiClient(fetcher: typeof fetch = fetch): ApiClient {
         Array.isArray(detail) ? detail.map(item =>
           typeof item === 'object' && item !== null && 'msg' in item ? String(item.msg) : String(item)
         ).join('；') : `请求失败（${response.status}）`)
-      throw new ApiError(text, response.status, body.state && body.status ? body as Result : undefined)
+      // Every 409 carries a full Result (state + status), so the client resyncs from
+      // the error itself instead of guessing what the server state is.
+      const result = body.state && (body.status || body.error) ? body as Result : undefined
+      throw new ApiError(text, response.status, result)
     }
     return response.json() as Promise<T>
   }

@@ -16,6 +16,26 @@ test('conflict reports backend error.message instead of generic HTTP text', asyn
   await assert.rejects(api.interact('s', {request_id:'r', npc_id:'owner', text:'hi'}), /状态已更新/)
 })
 
+test('a 409 Result body is attached to the error so the store can resynchronise', async () => {
+  const state = {
+    id:'s1', version:3, round:1, scene:{title:'',intro:''}, npcs:[], messages:[], clues:[],
+    inventory:[], commitments:[], tasks:[], available_actions:[], ending:null,
+  }
+  const api = createApiClient(async () => new Response(JSON.stringify({
+    request_id:'r', status:'failed', reply:'该存档有另一个请求正在处理，请稍后重试。',
+    action_result:null, state,
+    error:{ code:'session_busy', message:'该存档有另一个请求正在处理，请稍后重试。' },
+  }), { status: 409 }))
+  await assert.rejects(
+    api.interact('s1', {request_id:'r', npc_id:'owner', text:'你好'}),
+    (cause: { status?: number; result?: { state: { version: number } } }) => {
+      assert.equal(cause.status, 409)
+      assert.equal(cause.result?.state.version, 3)
+      return true
+    },
+  )
+})
+
 test('validation error array becomes readable text', async () => {
   const api = createApiClient(async () => new Response(JSON.stringify({
     detail: [{ msg: '文本太长' }],
